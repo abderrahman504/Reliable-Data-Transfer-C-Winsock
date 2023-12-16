@@ -5,7 +5,7 @@
 #include "Connection.c"
 #include "../Network.h"
 
-#define MAX_CONNECTIONS 100
+#define MAX_CONNECTIONS 1000
 #define TIMEOUT_1 2000 //Timeout if one connection exists
 //Array of connections
 ConnectionArgs* connections[MAX_CONNECTIONS];
@@ -40,7 +40,6 @@ void listening(SOCKET listen_socket)
                 closesocket(connections[i]->socket);
                 connections[i]->closed = 1;
                 no_of_connections--;
-
             }
         }
 
@@ -67,7 +66,6 @@ void listening(SOCKET listen_socket)
             accept_connection(listen_socket, pos_for_new_conn, cons_head == MAX_CONNECTIONS);
         }
     }
-    int debug = 10;
 }
 
 //Accepts a connection and creates a thread to handle it
@@ -120,14 +118,14 @@ int main(char args[])
     }
 
     //Preparing to create a socket
-    struct addrinfo *result = NULL, hints;
+    struct addrinfo *server = NULL, hints;
     ZeroMemory(&hints, sizeof(hints));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
-    hints.ai_protocol = IPPROTO_TCP;
+    hints.ai_protocol = IPPROTO_UDP;
     hints.ai_flags = AI_PASSIVE;
 
-    iResult = getaddrinfo(NULL, SERVER_PORT, &hints, &result);
+    iResult = getaddrinfo(NULL, SERVER_PORT, &hints, &server);
     if (iResult != 0) {
         printf("getaddrinfo failed: %d\n", iResult);
         WSACleanup();
@@ -136,24 +134,24 @@ int main(char args[])
 
     //Creating a listening socket
     SOCKET ListenSocket = INVALID_SOCKET;
-    ListenSocket = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
+    ListenSocket = socket(server->ai_family, server->ai_socktype, server->ai_protocol);
     if (ListenSocket == INVALID_SOCKET) {
         printf("Error at socket(): %ld\n", WSAGetLastError());
-        freeaddrinfo(result);
+        freeaddrinfo(server);
         WSACleanup();
         return 1;
     }
 
     //Binding the socket
-    iResult = bind(ListenSocket, result->ai_addr, (int)result->ai_addrlen);
+    iResult = bind(ListenSocket, server->ai_addr, (int)server->ai_addrlen);
     if (iResult == SOCKET_ERROR) {
         printf("bind failed with error: %d\n", WSAGetLastError());
-        freeaddrinfo(result);
+        freeaddrinfo(server);
         closesocket(ListenSocket);
         WSACleanup();
         return 1;
     }
-    freeaddrinfo(result);
+    freeaddrinfo(server);
 
     printf("Server started\n");
     listening(ListenSocket);
