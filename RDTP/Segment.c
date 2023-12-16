@@ -4,7 +4,6 @@
 
 #define MSS 500
 
-
 enum {SYN, DATA, FIN};
 
 typedef struct{
@@ -21,7 +20,6 @@ typedef struct{
     int checksum;
 } ACK_Segment;
 
-
 /*
 datagram structure and length
 0 byte: type
@@ -33,21 +31,19 @@ datagram structure and length
 header size = 13 bytes
 */
 
+//Computes the checksum of a segment from the header and body.
 int computeCheckSum(Segment* seg)
 {
-    int sum = seg->type + seg->len + seg->seq + seg->ack;
-    for (int i = 0; i < n; i++)
-    {
-        sum += data[i];
-    }
-    return sum;
+    int sum = seg->type + seg->len + seg->seq;
+    for (int i = 0; i < seg->len; i++) sum += seg->data[i];
+    return ~sum;
 }
 
-int isCorrupt(struct packet pkt)
+char isCorrupt(Segment* segment)
 {
-    int a = computeCheckSum(pkt.data + HEADER_SIZE, pkt.size);
-    int b = pkt.checksum;
-    return a != b;    
+    int sum = segment->type + segment->len + segment->seq + segment->checksum;
+    for(int i=0; i<segment->len; i++) sum += segment->data[i];
+    return sum != 0;    
 }
 
 //Extracts a segment from a char stream
@@ -57,14 +53,11 @@ Segment to_segment(unsigned char* stream)
     segment.type = stream[0];
     segment.len = _get_int_from_stream(stream+4);
     segment.seq = _get_int_from_stream(stream+8);
-    segment.ack = _get_int_from_stream(stream+12);
-    segment.checksum = _get_int_from_stream(stream+16);
+    segment.checksum = _get_int_from_stream(stream+12);
+    // segment.checksum = _get_int_from_stream(stream+16);
     
-    int data_start = 17;
-    for (int i=0; i<segment.len; i++)
-    {
-        segment.data[i] = stream[data_start+i];
-    }
+    int data_start = 13;
+    for (int i=0; i<segment.len; i++) segment.data[i] = stream[data_start+i];
     return segment;
 }
 
@@ -75,9 +68,9 @@ char* to_char_stream(Segment segment)
     stream[0] = segment.type;
     _put_int_in_stream(segment.len, stream+4);
     _put_int_in_stream(segment.seq, stream+8);
-    _put_int_in_stream(segment.ack, stream+12);
-    _put_int_in_stream(segment.checksum, stream+16);
-    for (int i=0; i<segment.len; i++) stream[17+i] = segment.data[i];
+    _put_int_in_stream(segment.checksum, stream+12);
+    // _put_int_in_stream(segment.checksum, stream+16);
+    for (int i=0; i<segment.len; i++) stream[13+i] = segment.data[i];
     return stream;
 }
 
@@ -94,18 +87,3 @@ int _get_int_from_stream(unsigned char* low_order_byte)
     int x = (*low_order_byte) | *(low_order_byte-1)<<8 | *(low_order_byte-2)<<16 | *(low_order_byte-3)<<24;
     return x;
 }
-
-
-
-
-
-/*
-datagram structure and length
-0 byte: type
-1-4 bytes: len
-5-8 bytes: seq
-9-12 bytes: checksum
-13-end bytes: data
-
-header size = 13 bytes
-*/
