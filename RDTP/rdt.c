@@ -10,7 +10,7 @@ int send(SOCKET socket, char* buffer, int len, int flags)
 }
 
 //Reliable function for receiving data from a socket.
-int rect(SOCKET socket, char* buffer, int len, int flags)
+int recv(SOCKET socket, char* buffer, int len, int flags)
 {
 
     return 0;
