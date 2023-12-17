@@ -32,18 +32,18 @@ header size = 13 bytes
 */
 
 //Computes the checksum of a segment from the header and body.
-int computeCheckSum(Segment* seg)
+int compute_checksum(Segment* seg)
 {
     int sum = seg->type + seg->len + seg->seq;
     for (int i = 0; i < seg->len; i++) sum += seg->data[i];
     return ~sum;
 }
 
-char isCorrupt(Segment* segment)
+char is_corrupt(Segment* segment)
 {
     int sum = segment->type + segment->len + segment->seq + segment->checksum;
     for(int i=0; i<segment->len; i++) sum += segment->data[i];
-    return sum != 0;    
+    return sum+1 != 0;    
 }
 
 //Extracts a segment from a char stream
