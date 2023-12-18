@@ -191,8 +191,8 @@ int connect_to_server(char* servername, char* port, SOCKET* conn_ptr)
     struct addrinfo *result = NULL, hints;
     ZeroMemory( &hints, sizeof(hints) );
     hints.ai_family   = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_protocol = IPPROTO_TCP;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_protocol = IPPROTO_UDP;
 
     iResult = getaddrinfo(servername, port, &hints, &result);
     if (iResult != 0) {
