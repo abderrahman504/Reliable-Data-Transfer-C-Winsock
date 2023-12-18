@@ -7,7 +7,7 @@
 enum {SYN, DATA, FIN};
 
 typedef struct{
-    int type;
+    char type;
     int len;
     int seq;
     int checksum;
@@ -16,6 +16,7 @@ typedef struct{
 
 
 typedef struct{
+    char type;
     int ack;
     int checksum;
 } ACK_Segment;
@@ -32,18 +33,25 @@ header size = 13 bytes
 */
 
 //Computes the checksum of a segment from the header and body.
-int compute_checksum(Segment* seg)
-{
+int compute_checksum(Segment* seg){
     int sum = seg->type + seg->len + seg->seq;
     for (int i = 0; i < seg->len; i++) sum += seg->data[i];
     return ~sum;
 }
 
-char is_corrupt(Segment* segment)
-{
+char is_corrupt(Segment* segment){
     int sum = segment->type + segment->len + segment->seq + segment->checksum;
     for(int i=0; i<segment->len; i++) sum += segment->data[i];
     return sum+1 != 0;    
+}
+
+int compute_ack_checksum(ACK_Segment* seg){
+    return ~seg->ack;
+}
+
+char is_ack_corrupt(ACK_Segment* seg){
+    int sum = seg->ack + seg->checksum;
+    return sum+1 != 0;
 }
 
 //Extracts a segment from a char stream
@@ -54,7 +62,6 @@ Segment to_segment(unsigned char* stream)
     segment.len = _get_int_from_stream(stream+4);
     segment.seq = _get_int_from_stream(stream+8);
     segment.checksum = _get_int_from_stream(stream+12);
-    // segment.checksum = _get_int_from_stream(stream+16);
     
     int data_start = 13;
     for (int i=0; i<segment.len; i++) segment.data[i] = stream[data_start+i];
@@ -69,8 +76,26 @@ char* to_char_stream(Segment segment)
     _put_int_in_stream(segment.len, stream+4);
     _put_int_in_stream(segment.seq, stream+8);
     _put_int_in_stream(segment.checksum, stream+12);
-    // _put_int_in_stream(segment.checksum, stream+16);
     for (int i=0; i<segment.len; i++) stream[13+i] = segment.data[i];
+    return stream;
+}
+
+ACK_Segment to_ack_segment(unsigned char* stream)
+{
+    ACK_Segment seg = {};
+    seg.type = stream[0];
+    seg.ack = _get_int_from_stream(stream+4);
+    seg.checksum = _get_int_from_stream(stream+8);
+    return seg;
+}
+
+char* ack_to_stream(ACK_Segment segment)
+{
+    char* stream = (char*)malloc(9);
+    memset(stream, 0, 8);
+    stream[0] = segment.type;
+    _put_int_in_stream(segment.ack, stream+4);
+    _put_int_in_stream(segment.checksum, stream+8);
     return stream;
 }
 
