@@ -6,7 +6,7 @@
 #include <math.h>
 
 
-#define TIMEOUT_MICROSEC 100000;
+#define TIMEOUT_USEC 100000;
 
 enum {UNSENT, SENT, RESENT, ACKED};
 enum {SLOW_START, CONGESTION_AVOIDANCE, FAST_RECOVERY};
@@ -38,7 +38,7 @@ int rdt_send(SOCKET socket, char* buffer, int len, struct sockaddr *dest, int de
 
     //Set socket to block recv calls for sending SYN
     struct timeval tv = {};
-    tv.tv_usec = TIMEOUT_MICROSEC;
+    tv.tv_usec = TIMEOUT_USEC;
     if (setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv)) {
         perror("setsockopt");
         return -1;
@@ -143,7 +143,7 @@ int rdt_send(SOCKET socket, char* buffer, int len, struct sockaddr *dest, int de
         {
             ACK_Segment ack_seg = to_ack_segment(recv_stream);
             int acked_seg_index = cur_seg;
-            while(segments[acked_seg_index].seq != ack_seg.ack) acked_seg_index++;
+            while(segments[acked_seg_index].seq+segments[acked_seg_index].len != ack_seg.ack) acked_seg_index++;
             //Check for corruption
             if (is_ack_corrupt(&ack_seg) || recv_res != 9) continue;
             if(markers[acked_seg_index].state = ACKED) //Duplicate
@@ -210,16 +210,10 @@ int rdt_send(SOCKET socket, char* buffer, int len, struct sockaddr *dest, int de
         return -1;
     }
 
-    //Send SYN segment
-    // Segment init_seg = {};
-    // init_seg.len = 0;
-    // init_seg.type = SYN;
-    // init_seg.seq = segments[no_of_segments-1].seq;
-    // init_seg.checksum = compute_checksum(&init_seg);
-
     //Send FIN segment
     Segment fin = {};
     fin.type = FIN;
+    fin.seq = timeout_usec;
     fin.len = 0;
     fin.checksum = compute_checksum(&fin);
     while(1)
@@ -311,40 +305,289 @@ int _transmit_segment(Segment* seg, Marker* seg_mark, float plp, float pep, SOCK
         if (will_corrupt)
         {
             stream[rand()%(seg->len)] += 1;
+        printf("**SECRET** Segment corrupted!\n");
         }
         res = sendto(s, stream, seg->len+SEGMENT_HEADER_LEN, 0, dest, dest_len);
         free(stream);
     }
-    else res = seg->len + SEGMENT_HEADER_LEN;
+    else 
+    {
+        res = seg->len + SEGMENT_HEADER_LEN;
+        printf("**SECRET** Segment lost!\n");
+    }
     return res;
 }
 
 //Reliable function for receiving data from a socket using a TCP-like policy.
-int rdt_recv(SOCKET socket, char* buffer, int len, struct sockaddr_in *dest_addr, int* dest_addr_len, float plp, float pep)
+int rdt_recv(SOCKET socket, char* buffer, int len, float plp, float pep, struct sockaddr_in *dest_addr, int* dest_addr_len)
 {
-    //infinite loop reading segments
-        //read stream
-        //if timeout and gotten SYN then send ACK 0
-        //if timeout and haven't SYN then repeat
-        //if haven't gotten SYN then
-            //if corrupted or not SYN then repeat
-            //else 
-                //store last seq number
-                //store expected seq as 0
-                //send SYN ACK
-                //mark SYN as received
-                //continue
-        //if gotten SYN
-            //if corrupted then send send ACK [expected seq]
-            //if not corrupted then check seq
-                //if not expected seq then send ACK [expected seq]
-                //else 
-                    //transfer segment payload buffer
-                    //increase expected seq and buffer head by segment.len
-                    //Send ack [expected seq]
+    char recv_stream[SEGMENT_HEADER_LEN + MSS];
+    int recv_res;
+    int send_res;
+    //Set socket to block recv calls for sending SYN
+    struct timeval tv = {};
+    tv.tv_usec = TIMEOUT_USEC;
+    if (setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv)) {
+        perror("setsockopt");
+        return -1;
+    }
+
+    Segment* segments; //will allocate space for data segments when SYN is received.
+    //Wait for SYN segment
+    char syn_received = 0;
+    Segment first_data = {};
+    while(1)
+    {
+        if (syn_received) printf("Waiting for next segment...\n");
+        else printf("Waiting for SYN segment...\n");
+        
+        recv_res = recvfrom(socket, recv_stream, SEGMENT_HEADER_LEN, 0, (struct sockaddr*)dest_addr, dest_addr_len);
+        if (recv_res < 0)
+        {
+            if(errno == EWOULDBLOCK || errno == EAGAIN)
+            {
+                printf("Timeout!\n");
+                continue;
+            }
+            else{
+                perror("recv SYN");
+                return -1;
+            }
+        }
+        else 
+        {
+            Segment seg = to_segment(recv_stream);
+            if (is_segment_corrupt(&seg))
+            {
+                printf("Corrupted SYN segment!\n");
+                continue;
+            }
+            else
+            {
+                if (seg.type == SYN)
+                {
+                    printf("Received SYN segment.\n");
+                    //Send SYN ACK
+                    ACK_Segment ack = {};
+                    ack.type = SYN;
+                    ack.ack = 0;
+                    ack.checksum = compute_ack_checksum(&ack);
+                    send_res = _transmit_ack(&ack, plp, pep, socket, (struct sockaddr*)dest_addr, *dest_addr_len);
+                    if (send_res < 0)
+                    {
+                        perror("sending SYN ACK");
+                        return -1;
+                    }
+                    else if (send_res != ACK_LEN)
+                    {
+                        printf("Didn't send all of SYN ACK. No action is taken\n");
+                    }
+                    if (!syn_received) //Allocate space for data segments
+                    {
+                        segments = malloc((int)ceil((double)seg.seq/MSS)*sizeof(Segment));
+                        for (int i=0; i<(int)ceil((double)seg.seq/MSS); i++)
+                            segments[i].type = -1;
+                    }
+                    syn_received = 1;
+                }
+                else if (seg.type != SYN && !syn_received)
+                {
+                    printf("Received non-SYN segment before SYN. Ignoring...\n");
+                    continue;
+                }
+                else
+                {
+                    first_data = to_segment(recv_stream);
+                    break;
+                }
+            }
+        }
+    }
+
+    // put first data where it belongs in segments array and send ack for awaited segment
+    int index = first_data.seq/MSS;
+    segments[index] = first_data;
+    send_res = _transmit_data_ack(&first_data, plp, pep, socket, (struct sockaddr*)dest_addr, *dest_addr_len);
+    if (send_res < 0)
+    {
+        perror("sending data ACK");
+        return -1;
+    }
+    else if (send_res != ACK_LEN)
+    {
+        printf("Didn't send all of data ACK. No action is taken\n");
+    }
+
+    Segment fin;
+    int first_unacked = index == 0 ? 1 : 0;
+    int estimatedRTT;
+    //Read data segments
+    while(1)
+    {
+        printf("Waiting for next segment...\n");
+        recv_res = recvfrom(socket, recv_stream, SEGMENT_HEADER_LEN+MSS, 0, (struct sockaddr*)dest_addr, dest_addr_len);
+        if (recv_res < 0)
+        {
+            if(errno == EWOULDBLOCK || errno == EAGAIN)
+            {
+                printf("Timeout!\n");
+                continue;
+            }
+            else{
+                perror("recv data");
+                return -1;
+            }
+        }
+        else 
+        {
+            Segment seg = to_segment(recv_stream);
+            if (is_segment_corrupt(&seg))
+            {
+                printf("Corrupted data segment!\n");
+                //send ack for first unacked segment
+                if (first_unacked != 0) _transmit_data_ack(segments+first_unacked-1, plp, pep, socket, (struct sockaddr*)dest_addr, *dest_addr_len);
+                else{
+                    ACK_Segment ack = {};
+                    ack.type = DATA;
+                    ack.ack = first_unacked == 0 ? 0 : segments[first_unacked-1].seq + segments[first_unacked-1].len;
+                    ack.checksum = compute_ack_checksum(&ack);
+                    _transmit_ack(&ack, plp, pep, socket, (struct sockaddr*)dest_addr, *dest_addr_len);
+                }
+                continue;
+            }
+            else
+            {
+                if (seg.type == FIN)
+                {
+                    printf("Received FIN segment.\n");
+                    fin = seg;
+                    estimatedRTT = fin.seq;
+                    //Send FIN ACK
+                    ACK_Segment ack = {};
+                    ack.type = FIN;
+                    ack.ack = 0;
+                    ack.checksum = compute_checksum(&ack);
+                    send_res = _transmit_ack(&ack, plp, pep, socket, (struct sockaddr*)dest_addr, *dest_addr_len);
+                    if (send_res < 0)
+                    {
+                        perror("sending FIN ACK");
+                        return -1;
+                    }
+                    else if (send_res != ACK_LEN)
+                    {
+                        printf("Didn't send all of FIN ACK. No action is taken\n");
+                    }
+                    break;
+                }
+                else
+                {
+                    //store segment in buffer
+                    index = seg.seq/MSS;
+                    segments[index] = seg;
+
+                    //Send ACK for first unacked segment
+                    if (first_unacked != 0) send_res = _transmit_data_ack(segments+first_unacked-1, plp, pep, socket, (struct sockaddr*)dest_addr, *dest_addr_len);
+                    else{
+                        ACK_Segment ack = {};
+                        ack.type = DATA;
+                        ack.ack = first_unacked == 0 ? 0 : segments[first_unacked-1].seq + segments[first_unacked-1].len;
+                        ack.checksum = compute_ack_checksum(&ack);
+                        send_res = _transmit_ack(&ack, plp, pep, socket, (struct sockaddr*)dest_addr, *dest_addr_len);
+                    }
+                    if (send_res < 0)
+                    {
+                        perror("sending data ACK");
+                        return -1;
+                    }
+                    else if (send_res != ACK_LEN)
+                    {
+                        printf("Didn't send all of data ACK. No action is taken\n");
+                    }
+                }
+            }
+        }
+    }
 
 
+    //Set socket to block recv calls for sending SYN
+    struct timeval tv = {};
+    tv.tv_usec = estimatedRTT*3;
+    if (setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv)) {
+        perror("setsockopt");
+        return -1;
+    }
 
+    //Wait for timeout or another FIN segment
+    while (1)
+    {
+        printf("Waiting to make sure sender received FIN ACK...\n");
+        recv_res = recvfrom(socket, recv_stream, SEGMENT_HEADER_LEN+MSS, 0, (struct sockaddr*)dest_addr, dest_addr_len);
+        if (recv_res < 0)
+        {
+            if(errno == EWOULDBLOCK || errno == EAGAIN)
+            {
+                printf("No response from sender. Terminating connection...\n");
+                break;
+            }
+            else{
+                perror("recv data");
+                return -1;
+            }
+        }
+        else 
+        {
+            //Send FIN ACK
+            printf("Sending FIN ACK.\n");
+            ACK_Segment ack = {};
+            ack.type = FIN;
+            ack.ack = 0;
+            ack.checksum = compute_checksum(&ack);
+            send_res = _transmit_ack(&ack, plp, pep, socket, (struct sockaddr*)dest_addr, *dest_addr_len);
+            if (send_res < 0)
+            {
+                perror("sending FIN ACK");
+                return -1;
+            }
+            else if (send_res != ACK_LEN)
+            {
+                printf("Didn't send all of FIN ACK. No action is taken\n");
+            }
+        }
+    }
+    printf("Finished rdt_recv()\n");
     return 0;
+}
+
+int _transmit_data_ack(Segment* seg, float plp, float pep, SOCKET s, struct sockaddr* dest, int dest_len)
+{
+    ACK_Segment ack = {};
+    ack.type = DATA;
+    ack.ack = seg->seq + seg->len;
+    ack.checksum = compute_checksum(&ack);
+    return _transmit_ack(&ack, plp, pep, s, dest, dest_len);
+}
+
+int _transmit_ack(ACK_Segment* ack, float plp, float pep, SOCKET s, struct sockaddr* dest, int dest_len)
+{
+    char will_lose = rand() % 100 < plp*100;
+    int res;
+    if (!will_lose)
+    {
+        char* stream = to_stream(ack);
+        char will_corrupt = rand() % 100 < pep*100;
+        if (will_corrupt)
+        {
+            stream[rand()%ACK_LEN] += 1;
+            printf("**SECRET** ACK corrupted!\n");
+        }
+        res = sendto(s, stream, ACK_LEN, 0, dest, dest_len);
+        free(stream);
+    }
+    else
+    {
+        res = ACK_LEN;
+        printf("**SECRET** ACK lost!\n");
+    }
+    return res;
 }
 
