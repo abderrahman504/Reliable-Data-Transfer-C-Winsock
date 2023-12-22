@@ -16,10 +16,14 @@ typedef struct {
     clock_t last_sent;
 } Marker;
 
+int _transmit_cwnd(int , Segment*, int , int , Marker* , float , float , SOCKET , struct sockaddr* , int);
+int _transmit_segment(Segment*, Marker*, float, float, SOCKET, struct sockaddr*, int);
+int _transmit_data_ack(Segment*, float, float, SOCKET, struct sockaddr*, int);
+int _transmit_ack(ACK_Segment*, float, float, SOCKET, struct sockaddr*, int);
 
 //Reliable function for sending data through a socket using a TCP-like policy.
 //Assumes selective acknowledgement
-int rdt_send(SOCKET socket, char* buffer, int len, struct sockaddr *dest, int dest_len, float plp, float pep)
+int rdt_send(SOCKET socket, char* buffer, int len, float plp, float pep, struct sockaddr *dest, int dest_len)
 {
     //Break up buffer into segments
     int no_of_segments = (int)ceil((double)len/MSS);
@@ -66,7 +70,7 @@ int rdt_send(SOCKET socket, char* buffer, int len, struct sockaddr *dest, int de
         {
             printf("Didn't send all of SYN segment. No action is taken\n");
         }
-        recv_res = recvfrom(socket, recv_stream, ACK_LEN, 0, dest, dest_len);
+        recv_res = recvfrom(socket, recv_stream, ACK_LEN, 0, dest, &dest_len);
         if (recv_res < 0)
         {
             if(errno == EWOULDBLOCK || errno == EAGAIN)
@@ -115,7 +119,7 @@ int rdt_send(SOCKET socket, char* buffer, int len, struct sockaddr *dest, int de
     _transmit_cwnd(cwnd, segments, cur_seg, no_of_segments, markers, plp, pep, socket, dest, dest_len);
     while(cur_seg < no_of_segments)
     {
-        recv_res = recvfrom(socket, recv_stream, ACK_LEN, 0, dest, dest_len);
+        recv_res = recvfrom(socket, recv_stream, ACK_LEN, 0, dest, &dest_len);
         if (recv_res < 0)
         {
             if(errno == EWOULDBLOCK) //received nothing
@@ -203,9 +207,9 @@ int rdt_send(SOCKET socket, char* buffer, int len, struct sockaddr *dest, int de
     //Received all acknowledgements
 
     //Set socket to block recv calls for sending SYN
-    struct timeval tv = {};
+    struct timeval tv2 = {};
     tv.tv_usec = timeout_usec;
-    if (setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv)) {
+    if (setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv2, sizeof tv2)) {
         perror("setsockopt");
         return -1;
     }
@@ -229,7 +233,7 @@ int rdt_send(SOCKET socket, char* buffer, int len, struct sockaddr *dest, int de
         {
             printf("Didn't send all of FIN segment. No action is taken\n");
         }
-        recv_res = recvfrom(socket, recv_stream, ACK_LEN, 0, dest, dest_len);
+        recv_res = recvfrom(socket, recv_stream, ACK_LEN, 0, dest, &dest_len);
         if (recv_res < 0)
         {
             if(errno == EWOULDBLOCK || errno == EAGAIN)
@@ -258,7 +262,7 @@ int rdt_send(SOCKET socket, char* buffer, int len, struct sockaddr *dest, int de
     return 0;
 }
 
-int _transmit_cwnd(int cwnd, Segment segments[], int cur_seg, int no_of_segments, Marker markers[], float plp, float pep, SOCKET s, struct sockaddr* dest, int dest_len)
+int _transmit_cwnd(int cwnd, Segment* segments, int cur_seg, int no_of_segments, Marker* markers, float plp, float pep, SOCKET s, struct sockaddr* dest, int dest_len)
 {
     int final_seg = cur_seg;
     int sum = segments[cur_seg].len;
@@ -357,7 +361,7 @@ int rdt_recv(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
         else 
         {
             Segment seg = to_segment(recv_stream);
-            if (is_segment_corrupt(&seg))
+            if (is_corrupt(&seg))
             {
                 printf("Corrupted SYN segment!\n");
                 continue;
@@ -441,7 +445,7 @@ int rdt_recv(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
         else 
         {
             Segment seg = to_segment(recv_stream);
-            if (is_segment_corrupt(&seg))
+            if (is_corrupt(&seg))
             {
                 printf("Corrupted data segment!\n");
                 //send ack for first unacked segment
@@ -466,7 +470,7 @@ int rdt_recv(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
                     ACK_Segment ack = {};
                     ack.type = FIN;
                     ack.ack = 0;
-                    ack.checksum = compute_checksum(&ack);
+                    ack.checksum = compute_ack_checksum(&ack);
                     send_res = _transmit_ack(&ack, plp, pep, socket, (struct sockaddr*)dest_addr, *dest_addr_len);
                     if (send_res < 0)
                     {
@@ -510,9 +514,9 @@ int rdt_recv(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
 
 
     //Set socket to block recv calls for sending SYN
-    struct timeval tv = {};
+    struct timeval tv2 = {};
     tv.tv_usec = estimatedRTT*3;
-    if (setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv)) {
+    if (setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv2, sizeof tv2)) {
         perror("setsockopt");
         return -1;
     }
@@ -541,7 +545,7 @@ int rdt_recv(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
             ACK_Segment ack = {};
             ack.type = FIN;
             ack.ack = 0;
-            ack.checksum = compute_checksum(&ack);
+            ack.checksum = compute_ack_checksum(&ack);
             send_res = _transmit_ack(&ack, plp, pep, socket, (struct sockaddr*)dest_addr, *dest_addr_len);
             if (send_res < 0)
             {
@@ -563,7 +567,7 @@ int _transmit_data_ack(Segment* seg, float plp, float pep, SOCKET s, struct sock
     ACK_Segment ack = {};
     ack.type = DATA;
     ack.ack = seg->seq + seg->len;
-    ack.checksum = compute_checksum(&ack);
+    ack.checksum = compute_ack_checksum(&ack);
     return _transmit_ack(&ack, plp, pep, s, dest, dest_len);
 }
 
@@ -573,7 +577,7 @@ int _transmit_ack(ACK_Segment* ack, float plp, float pep, SOCKET s, struct socka
     int res;
     if (!will_lose)
     {
-        char* stream = to_stream(ack);
+        char* stream = ack_to_stream(ack);
         char will_corrupt = rand() % 100 < pep*100;
         if (will_corrupt)
         {

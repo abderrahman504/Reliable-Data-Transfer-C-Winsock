@@ -36,7 +36,7 @@ header size = 13 bytes
 */
 
 int _get_int_from_stream(unsigned char*);
-void _put_int_in_stream(int x, unsigned char*)
+void _put_int_in_stream(int x, unsigned char*);
 
 //Computes the checksum of a segment from the header and body.
 int compute_checksum(Segment* seg){
@@ -99,9 +99,9 @@ char* ack_to_stream(ACK_Segment* segment)
 {
     unsigned char* stream = (char*)malloc(9);
     memset(stream, 0, 8);
-    stream[0] = segment.type;
-    _put_int_in_stream(segment.ack, stream+4);
-    _put_int_in_stream(segment.checksum, stream+8);
+    stream[0] = segment->type;
+    _put_int_in_stream(segment->ack, stream+4);
+    _put_int_in_stream(segment->checksum, stream+8);
     return stream;
 }
 
