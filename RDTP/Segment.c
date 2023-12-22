@@ -3,22 +3,25 @@
 #include <string.h>
 
 #define MSS 500
+#define SEGMENT_HEADER_LEN 13
+#define ACK_LEN 9
 
 enum {SYN, DATA, FIN};
 
+
 typedef struct{
-    char type;
-    int len;
-    int seq;
-    int checksum;
-    char data[MSS];
+    unsigned char type;
+    unsigned int len;
+    unsigned int seq;
+    unsigned int checksum;
+    unsigned char data[MSS];
 } Segment;
 
 
 typedef struct{
-    char type;
-    int ack;
-    int checksum;
+    unsigned char type;
+    unsigned int ack;
+    unsigned int checksum;
 } ACK_Segment;
 
 /*
@@ -31,6 +34,9 @@ datagram structure and length
 
 header size = 13 bytes
 */
+
+int _get_int_from_stream(unsigned char*);
+void _put_int_in_stream(int x, unsigned char*)
 
 //Computes the checksum of a segment from the header and body.
 int compute_checksum(Segment* seg){
@@ -68,15 +74,15 @@ Segment to_segment(unsigned char* stream)
     return segment;
 }
 
-char* to_char_stream(Segment segment)
+char* to_stream(Segment* segment)
 {
-    char *stream = (char*)malloc(17+segment.len);
-    memset(stream, 0, 17+segment.len);
-    stream[0] = segment.type;
-    _put_int_in_stream(segment.len, stream+4);
-    _put_int_in_stream(segment.seq, stream+8);
-    _put_int_in_stream(segment.checksum, stream+12);
-    for (int i=0; i<segment.len; i++) stream[13+i] = segment.data[i];
+    char *stream = (char*)malloc(17+(segment->len));
+    memset(stream, 0, 17+segment->len);
+    stream[0] = segment->type;
+    _put_int_in_stream(segment->len, stream+4);
+    _put_int_in_stream(segment->seq, stream+8);
+    _put_int_in_stream(segment->checksum, stream+12);
+    for (int i=0; i<segment->len; i++) stream[13+i] = segment->data[i];
     return stream;
 }
 
@@ -89,9 +95,9 @@ ACK_Segment to_ack_segment(unsigned char* stream)
     return seg;
 }
 
-char* ack_to_stream(ACK_Segment segment)
+char* ack_to_stream(ACK_Segment* segment)
 {
-    char* stream = (char*)malloc(9);
+    unsigned char* stream = (char*)malloc(9);
     memset(stream, 0, 8);
     stream[0] = segment.type;
     _put_int_in_stream(segment.ack, stream+4);
