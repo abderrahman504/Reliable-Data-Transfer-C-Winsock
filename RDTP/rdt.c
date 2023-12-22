@@ -50,27 +50,23 @@ int rdt_send(SOCKET socket, char* buffer, int len, struct sockaddr *dest, int de
     init_seg.type = SYN;
     init_seg.seq = segments[no_of_segments-1].seq;
     init_seg.checksum = compute_checksum(&init_seg);
-    char* send_stream = to_char_stream(&init_seg);
+    // char* send_stream = to_char_stream(&init_seg);
     int send_res;
     char recv_stream[ACK_LEN];
     int recv_res;
     while(1)
     {
         printf("Sending SYN segment...\n");
-        //Apply PLP and PRP before sending
-        //Chance for loss
-        if (rand()%100 > plp*100)//if true then send
+        send_res = _transmit_segment(&init_seg, NULL, plp, pep, socket, dest, dest_len);
+        if (send_res == -1)
         {
-            //Chance for corruption
-            if (rand()%100 < pep*100)//if true then corrupt
-                send_stream[3] += 3;
-            int send_res = sendto(socket, send_stream, SEGMENT_HEADER_LEN, 0, dest, dest_len);
-            if (send_res < 0)
-            {
-                perror("send SYN");
-                return -1;
-            }
-        } 
+            perror("sending SYN");
+            return -1;
+        }
+        else if (send_res != 0)
+        {
+            printf("Didn't send all of SYN segment. No action is taken\n");
+        }
         recv_res = recvfrom(socket, recv_stream, ACK_LEN, 0, dest, dest_len);
         if (recv_res < 0)
         {
@@ -95,7 +91,7 @@ int rdt_send(SOCKET socket, char* buffer, int len, struct sockaddr *dest, int de
             else break;
         }
     }
-    free(send_stream);
+    // free(send_stream);
 
     // Change socket to non-blocking mode
     u_long mode = 1;  // 1 to enable non-blocking mode, 0 to disable
@@ -134,6 +130,7 @@ int rdt_send(SOCKET socket, char* buffer, int len, struct sockaddr *dest, int de
                     ssthresh = cwnd / 2;
                     cwnd = MSS;
                     dup_ack_count = 0;
+                    time_msec *= 2;
                     _transmit_segment(segments+cur_seg, markers+cur_seg, plp, pep, socket, dest, dest_len);
                     state = SLOW_START;
                 }
@@ -143,11 +140,14 @@ int rdt_send(SOCKET socket, char* buffer, int len, struct sockaddr *dest, int de
                 perror("recv ACK");
                 return -1;
             }
-
-            //received something
+        }
+        else //received something
+        {
             ACK_Segment ack_seg = to_ack_segment(recv_stream);
             int acked_seg_index = cur_seg;
             while(segments[acked_seg_index].seq != ack_seg.ack) acked_seg_index++;
+            //Check for corruption
+            if (is_ack_corrupt(&ack_seg) || recv_res != 9) continue;
             if(markers[acked_seg_index].state = ACKED) //Duplicate
             {
                 printf("Received duplicate ack %d.\n", ack_seg.ack);
@@ -179,9 +179,11 @@ int rdt_send(SOCKET socket, char* buffer, int len, struct sockaddr *dest, int de
                     devRTT = devRTT*0.75 + 0.25*(sampleRTT > estimatedRTT ? sampleRTT-estimatedRTT : estimatedRTT-sampleRTT);
                     timeout_msec = estimatedRTT + 4*devRTT;
                 }
+
                 //Update cur_seg to next unacked segment
                 markers[acked_seg_index].state = ACKED;
-                while(markers[cur_seg].state == ACKED) cur_seg++;
+                while(cur_seg < no_of_segments && markers[cur_seg].state == ACKED) cur_seg++;
+                if (cur_seg == no_of_segments) break;
                 dup_ack_count = 0;
                 
                 if(state == SLOW_START)
@@ -199,13 +201,20 @@ int rdt_send(SOCKET socket, char* buffer, int len, struct sockaddr *dest, int de
                     cwnd += MSS;
             }
         }
+        //Received all acknowledgements
+
+        //Send FIN segment
+        Segment fin;
+        fin.type = FIN;
+        fin.len = 0;
+
     }
 
     printf("Finished snw_send.\n");
     return 0;
 }
 
-void _transmit_cwnd(int cwnd, Segment segments[], int cur_seg, int no_of_segments, Marker markers[], float plp, float pep, SOCKET s, struct sockaddr* dest, int dest_len)
+int _transmit_cwnd(int cwnd, Segment segments[], int cur_seg, int no_of_segments, Marker markers[], float plp, float pep, SOCKET s, struct sockaddr* dest, int dest_len)
 {
     int final_seg = cur_seg;
     int sum = segments[cur_seg].len;
@@ -218,25 +227,33 @@ void _transmit_cwnd(int cwnd, Segment segments[], int cur_seg, int no_of_segment
     for(int i=cur_seg; i<=final_seg; i++)
     {
         if (markers[i].state == ACKED) continue;
-        _transmit_segment(segments+i, markers+i, plp, pep, s, dest, dest_len);
+        int res = _transmit_segment(segments+i, markers+i, plp, pep, s, dest, dest_len);
+        if (res < segments[i].len + SEGMENT_HEADER_LEN)
+        {
+            return res;
+        }
     }
-
+    return 0;
 }
 
-void _transmit_segment(Segment* seg, Marker* seg_mark, float plp, float pep, SOCKET s, struct sockaddr* dest, int dest_len)
+int _transmit_segment(Segment* seg, Marker* seg_mark, float plp, float pep, SOCKET s, struct sockaddr* dest, int dest_len)
 {
-    switch(seg_mark->state)
+    if (seg_mark != NULL)
     {
-        case UNSENT:
-            seg_mark->state = SENT;
-        break;
-        case SENT:
-        case RESENT:
-            seg_mark->state = RESENT;
-        break;
+        switch(seg_mark->state)
+        {
+            case UNSENT:
+                seg_mark->state = SENT;
+            break;
+            case SENT:
+            case RESENT:
+                seg_mark->state = RESENT;
+            break;
+        }
+        seg_mark->last_sent = clock();
     }
-    seg_mark->last_sent = clock();
     char will_lose = rand() % 100 < plp*100;
+    int res;
     if (!will_lose)
     {
         char* stream = to_stream(seg);
@@ -245,10 +262,11 @@ void _transmit_segment(Segment* seg, Marker* seg_mark, float plp, float pep, SOC
         {
             stream[rand()%(seg->len)] += 1;
         }
-        sendto(s, stream, seg->len+SEGMENT_HEADER_LEN, 0, dest, dest_len);
+        res = sendto(s, stream, seg->len+SEGMENT_HEADER_LEN, 0, dest, dest_len);
         free(stream);
     }
-    
+    else res = seg->len + SEGMENT_HEADER_LEN;
+    return res;
 }
 
 //Reliable function for receiving data from a socket using a TCP-like policy.
