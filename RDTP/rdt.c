@@ -41,18 +41,18 @@ int rdt_send(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
     }
 
     // Change socket to blocking mode
-    u_long mode = 0;  // 1 to enable non-blocking mode, 0 to disable
+    u_long mode = 1;  // 1 to enable non-blocking mode, 0 to disable
     if (ioctlsocket(socket, FIONBIO, &mode) != NO_ERROR) {
         printf("ioctlsocket failed with error: %u\n", WSAGetLastError());
         return -1;
     }
     //Set socket to block recv calls for sending SYN
-    struct timeval tv = {};
-    tv.tv_usec = TIMEOUT_USEC;
-    if (setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv)) {
-        perror("setsockopt");
-        return -1;
-    }
+    // struct timeval tv = {};
+    // tv.tv_usec = TIMEOUT_USEC;
+    // if (setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv)) {
+    //     perror("setsockopt");
+    //     return -1;
+    // }
 
     //Send SYN segment
     Segment init_seg = {};
@@ -63,10 +63,13 @@ int rdt_send(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
     int send_res;
     char recv_stream[ACK_LEN];
     int recv_res;
+    clock_t last_send;
+    int timeout_usec = TIMEOUT_USEC;
     while(1)
     {
         printf("Sending SYN segment...\n");
         send_res = _transmit_segment(&init_seg, NULL, plp, pep, socket, dest, dest_len);
+        last_send = clock();
         if (send_res == -1)
         {
             perror("sending SYN");
@@ -76,45 +79,47 @@ int rdt_send(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
         {
             printf("Didn't send all of SYN segment. No action is taken\n");
         }
-        recv_res = recvfrom(socket, recv_stream, ACK_LEN, 0, dest, &dest_len);
-        if (recv_res < 0)
+        while(1)
         {
-            printf("Timeout. Resending SYN segment...\n");
-            continue;
-            // if(errno == EWOULDBLOCK || errno == EAGAIN)
-            // {
-            // }
-            // else{
-            //     perror("recv SYN ACK");
-            //     return -1;
-            // }
-        }
-        else 
-        {
-            ACK_Segment ack = to_ack_segment(recv_stream);
-            if (ack.type != SYN || is_ack_corrupt(&ack))
+            recv_res = recvfrom(socket, recv_stream, ACK_LEN, 0, dest, &dest_len);
+            if (recv_res < 0)
             {
-                printf("Corrupted ACK. Resending SYN segment...\n");
+                if (timeout_usec <= time_usec_since(last_send))
+                {
+                    printf("Timeout. Resending SYN segment...\n");
+                    break;
+                }
                 continue;
             }
             else 
             {
-                printf("Received SYN ACK. Moving on...\n");
+                ACK_Segment ack = to_ack_segment(recv_stream);
+                if (ack.type != SYN || is_ack_corrupt(&ack))
+                {
+                    printf("Corrupted ACK. Resending SYN segment...\n");
+                    break;
+                }
+                else 
+                {
+                    printf("Received SYN ACK. Moving on...\n");
+                }
+                goto AfterSYN;
             }
-            break;
+
         }
     }
+    AfterSYN:
 
     // Change socket to non-blocking mode
-    mode = 1;  // 1 to enable non-blocking mode, 0 to disable
-    if (ioctlsocket(socket, FIONBIO, &mode) != NO_ERROR) {
-        printf("ioctlsocket failed with error: %u\n", WSAGetLastError());
-        return -1;
-    }
+    // mode = 1;  // 1 to enable non-blocking mode, 0 to disable
+    // if (ioctlsocket(socket, FIONBIO, &mode) != NO_ERROR) {
+    //     printf("ioctlsocket failed with error: %u\n", WSAGetLastError());
+    //     return -1;
+    // }
     //Timeout calculation variables
     int estimatedRTT = 0;
     int devRTT = 0;
-    int timeout_usec = 1000;
+    timeout_usec = 1000;
     //Congestion control variables
     int cwnd = MSS;
     int ssthresh = 64000;
@@ -235,19 +240,19 @@ int rdt_send(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
     }
     //Received all acknowledgements
 
-    // Change socket to blocking mode
-    mode = 0;  // 1 to enable non-blocking mode, 0 to disable
-    if (ioctlsocket(socket, FIONBIO, &mode) != NO_ERROR) {
-        printf("ioctlsocket failed with error: %u\n", WSAGetLastError());
-        return -1;
-    }
-    //Set socket to block recv calls for sending SYN
-    struct timeval tv2 = {};
-    tv.tv_usec = timeout_usec;
-    if (setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv2, sizeof tv2)) {
-        perror("setsockopt");
-        return -1;
-    }
+    // // Change socket to blocking mode
+    // mode = 1;  // 1 to enable non-blocking mode, 0 to disable
+    // if (ioctlsocket(socket, FIONBIO, &mode) != NO_ERROR) {
+    //     printf("ioctlsocket failed with error: %u\n", WSAGetLastError());
+    //     return -1;
+    // }
+    // //Set socket to block recv calls for sending SYN
+    // struct timeval tv2 = {};
+    // tv.tv_usec = timeout_usec;
+    // if (setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv2, sizeof tv2)) {
+    //     perror("setsockopt");
+    //     return -1;
+    // }
 
     //Send FIN segment
     Segment fin = {};
@@ -259,34 +264,41 @@ int rdt_send(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
     {
         printf("Sending FIN segment...\n");
         send_res = _transmit_segment(&fin, NULL, plp, pep, socket, dest, dest_len);
+        last_send = clock();
         if (send_res == -1)
         {
             perror("sending SYN");
             return -1;
         }
-
-        recv_res = recvfrom(socket, recv_stream, ACK_LEN, 0, dest, &dest_len);
-        if (recv_res < 0)
+        while(1)
         {
-            printf("Timeout. Resending FIN segment...\n");
-            continue;
-        }
-        else 
-        {
-            ACK_Segment ack = to_ack_segment(recv_stream);
-            if (ack.type != FIN || is_ack_corrupt(&ack))
+            recv_res = recvfrom(socket, recv_stream, ACK_LEN, 0, dest, &dest_len);
+            if (recv_res < 0)
             {
-                printf("Corrupted ACK. Resending FIN segment...\n");
+                if (timeout_usec <= time_usec_since(last_send))
+                {
+                    printf("Timeout. Resending FIN segment...\n");
+                    break;
+                }
                 continue;
             }
-            
-            else
+            else 
             {
-                printf("Received FIN ACK.\n");
-                break;
-            } 
+                ACK_Segment ack = to_ack_segment(recv_stream);
+                if (ack.type != FIN || is_ack_corrupt(&ack))
+                {
+                    printf("Corrupted ACK. Resending FIN segment...\n");
+                    break;
+                }
+                else
+                {
+                    printf("Received FIN ACK.\n");
+                    goto AfterFIN;
+                } 
+            }
         }
     }
+    AfterFIN:
     Sleep(100);
     printf("Finished rdt_send().\n");
     return 0;
@@ -339,7 +351,7 @@ int _transmit_segment(Segment* seg, Marker* seg_mark, float plp, float pep, SOCK
         char will_corrupt = rand() % 100 < pep*100;
         if (will_corrupt)
         {
-            stream[rand()%(seg->len)] += 1;
+            stream[rand()%(seg->len+SEGMENT_HEADER_LEN)] += 1;
         printf("**SECRET** Segment corrupted!\n");
         }
         res = sendto(s, stream, seg->len+SEGMENT_HEADER_LEN, 0, dest, dest_len);
@@ -642,5 +654,13 @@ int _transmit_ack(ACK_Segment* ack, float plp, float pep, SOCKET s, struct socka
         printf("**SECRET** ACK lost!\n");
     }
     return res;
+}
+
+
+int time_usec_since(clock_t start)
+{
+    clock_t now = clock();
+    int time_usec = ((double)now-start) / CLOCKS_PER_SEC * 1000000;
+    return time_usec;
 }
 

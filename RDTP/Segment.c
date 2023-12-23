@@ -46,6 +46,7 @@ int compute_checksum(Segment* seg){
 }
 
 char is_corrupt(Segment* segment){
+    if (segment->len > 500) return 1;
     int sum = segment->type + segment->len + segment->seq + segment->checksum;
     for(int i=0; i<segment->len; i++) sum += segment->data[i];
     return sum+1 != 0;    
