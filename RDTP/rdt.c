@@ -148,14 +148,14 @@ int rdt_send(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
         if (recv_res < 0)
         {
             clock_t now = clock();
-            int time_msec = ((double)now-markers[send_base].last_sent) / CLOCKS_PER_SEC * 1000;
-            if (time_msec >= timeout_usec) //timer expired
+            int time_usec = ((double)now-markers[send_base].last_sent) / CLOCKS_PER_SEC * 1000000;
+            if (time_usec >= timeout_usec) //timer expired
             {
                 printf("Timeout.\n");
                 ssthresh = cwnd / 2;
                 cwnd = MSS;
                 dup_ack_count = 0;
-                time_msec *= 2;
+                time_usec *= 2;
                 _transmit_segment(segments+send_base, markers+send_base, plp, pep, socket, dest, dest_len);
                 state = SLOW_START;
             }
