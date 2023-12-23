@@ -48,7 +48,7 @@ int main() {
     struct sockaddr_in client_addr;
     int client_addr_len = sizeof(client_addr);
     printf("Receiving data...\n");
-    int bytesRead = rdt_recv(udp_socket, buffer, sizeof(buffer), 0, 0, (struct sockaddr*)&client_addr, &client_addr_len);
+    int bytesRead = rdt_recv(udp_socket, buffer, sizeof(buffer), 0, 0, &client_addr, &client_addr_len);
     if (bytesRead == SOCKET_ERROR) {
         printf("Failed to receive data.\n");
         closesocket(udp_socket);
@@ -61,7 +61,7 @@ int main() {
 
     
     // Send data to the client
-    const char* message = "Hello, client!";
+    char message[] = "Hello, client!";
     int messageLength = strlen(message);
     if (rdt_send(udp_socket, message, messageLength, 0, 0, (struct sockaddr*)&client_addr, client_addr_len) == SOCKET_ERROR) {
         printf("Failed to send data to the server.\n");
