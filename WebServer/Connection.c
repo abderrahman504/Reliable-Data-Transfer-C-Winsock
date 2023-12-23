@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <time.h>
 
-#define BUFFER_LENGTH 100000
+#define BUFFER_LENGTH 10000
 
 #define NOT_FOUND "HTTP/1.1 404 Not Found\r\n"
 #define OK "HTTP/1.1 200 OK\r\n"
@@ -114,6 +114,7 @@ int handle_get(SOCKET socket, char* path)
         char response[100] = "";
         strcat(response, NOT_FOUND);
         strcat(response, BLANK_LINE);
+        printf("%s",response);
         return send(socket, response, 100, 0);
     }
     else //File found
@@ -123,13 +124,30 @@ int handle_get(SOCKET socket, char* path)
         strcat(response,OK);
         strcat(response,BLANK_LINE);
 
-        size_t bytesRead = fread(response+19, 1, sizeof(response)-19, file);
-        printf("bytesRead = %d\n",bytesRead);
-        printf("%s",response);
-        int result = send(socket, response, bytesRead+19 , 0);
-        if(result==SOCKET_ERROR){
-            printf("error while sending\n");
-        }
+        // size_t bytesRead = fread(response+19, 1, sizeof(response)-19, file);
+        // printf("bytesRead = %d\n",bytesRead);
+        // printf("%s",response);
+        // int result = send(socket, response, bytesRead+19 , 0);
+        size_t bytesRead;
+        int result;
+        
+        // if(result==SOCKET_ERROR){
+        //     printf("error while sending\n");
+        // }
+
+        do {
+            bytesRead = fread(response+19, 1, sizeof(response)-19, file);
+            if(bytesRead == 0)
+                break;
+            printf("bytesRead = %d\n", bytesRead);
+            printf("%s", response);
+
+            result = send(socket, response, bytesRead+19 , 0);
+            if(result == SOCKET_ERROR){
+                printf("error while sending\n");
+                break;
+            }
+        } while (bytesRead > 0);
 
         // Clean up: close the file and free the allocated memory
         fclose(file);
@@ -166,6 +184,22 @@ int handle_post(SOCKET socket,char* buffer, int received)
         }
         
         fwrite(bodyStart, 1, received - (bodyStart - buffer), file);
+
+        // Receive the rest of the body in chunks
+        char chunk[BUFFER_LENGTH];
+        int bytesReceived;
+        do {
+            bytesReceived = recv(socket, chunk, sizeof(chunk), 0);
+            if (bytesReceived > 0) {
+                fwrite(chunk, 1, bytesReceived, file);
+            } else if (bytesReceived < 0) {
+                perror("Error receiving data");
+                return 1;
+            }
+
+            if(bytesReceived < BUFFER_LENGTH)
+                break;
+        } while (bytesReceived > 0);
 
         char response[100];
         strcat(response, OK);
