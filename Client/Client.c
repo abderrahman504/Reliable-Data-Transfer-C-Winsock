@@ -277,43 +277,7 @@ Creates and connects a socket to the specified server and port.
 conn is an output pointer that contains the created socket.
 Returns 0 if connected succesfully, and 1 otherwise.
 */
-int connect_to_server(char* servername, char* port, SOCKET* conn_ptr, struct sockaddr* dest, int* dest_len)
-{
-    int iResult;
-    //Prep socket creation
-    struct addrinfo *result = NULL, hints;
-    ZeroMemory( &hints, sizeof(hints) );
-    hints.ai_family   = AF_INET;
-    hints.ai_socktype = SOCK_DGRAM;
-    hints.ai_protocol = IPPROTO_UDP;
 
-    iResult = getaddrinfo(servername, port, &hints, &result);
-    if (iResult != 0) {
-        printf("getaddrinfo failed: %d\n", iResult);
-        return 1;
-    }
-    //Create socket
-    *conn_ptr = INVALID_SOCKET;
-    *conn_ptr = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
-    if (*conn_ptr == INVALID_SOCKET) {
-        printf("Error at socket(): %ld\n", WSAGetLastError());
-        freeaddrinfo(result);
-        return 1;
-    }
-
-    //Connecting to server
-    // iResult = connect(*conn_ptr, result->ai_addr, (int)result->ai_addrlen);
-    // freeaddrinfo(result);
-    // if (iResult == SOCKET_ERROR){
-    //     // closesocket(*conn_ptr);
-    //     *conn_ptr = INVALID_SOCKET;
-    // }
-    // if (*conn_ptr == INVALID_SOCKET) {
-    //     printf("Unable to connect to server!\n");
-    //     return 1;
-    // }
-    return 0;
-}
 
 /*
 Running from command line:
@@ -334,20 +298,36 @@ int main(int argc, char *argv[])
         printf("Couldn't open commands file %s. Make sure this file exists\n. Closing client.\n", command_file);
         return 1;
     }
+
     // Initialize Winsock
     WSADATA wsaData;
-    int iResult = WSAStartup(MAKEWORD(2,2), &wsaData);
-    if (iResult != 0) {
-        printf("WSAStartup failed: %d\n", iResult);
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        printf("Failed to initialize Winsock.\n");
         return 1;
     }
-    SOCKET conn = INVALID_SOCKET;
-    struct sockaddr dest;
-    int dest_len;
-    if (connect_to_server(server_name, server_port, &conn, &dest, &dest_len) == 0){
-        printf("Client connected to server\n");
-        start(file, conn, &dest, dest_len);
+
+    // Create a exchange sockets
+    SOCKET udp_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (udp_socket == INVALID_SOCKET) {
+        printf("Failed to create send socket.\n");
+        WSACleanup();
+        return 1;
     }
+
+    // Set up server address
+    struct addrinfo *server = NULL, hints;
+    ZeroMemory( &hints, sizeof(hints) );
+    hints.ai_family   = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_protocol = IPPROTO_UDP;
+
+    int iResult = getaddrinfo("localhost", SERVER_PORT, &hints, &server);
+    if (iResult != 0) {
+        printf("getaddrinfo failed: %d\n", iResult);
+        return 1;
+    }
+    start(file, udp_socket, server->ai_addr, server->ai_addrlen);
+    
     WSACleanup();
     printf("Client shutting down.\n");
     return 0;

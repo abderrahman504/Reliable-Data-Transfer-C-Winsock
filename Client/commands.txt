@@ -1,1 +1,1 @@
-client_get get.jpg
+client_get get.png

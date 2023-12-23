@@ -568,8 +568,15 @@ int rdt_recv(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
         }
         else 
         {
+            Segment seg = to_segment(recv_stream);
+            if (!is_corrupt(&seg) && seg.type != FIN)
+            {
+                printf("Received non-FIN segment. Terminating connection...\n");
+                break;
+            }
+            printf("Received FIN segment.\n");
             //Send FIN ACK
-            printf("Sending FIN ACK.\n");
+            printf("Sending FIN ACK...\n");
             ACK_Segment ack = {};
             ack.type = FIN;
             ack.ack = 0;
