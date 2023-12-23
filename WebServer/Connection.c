@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include "../RDTP/rdt.c"
 
 #define BUFFER_LENGTH 10000
 
@@ -22,62 +23,53 @@ typedef struct {
 void print_optns();
 void parse_rqln(char*, char*, char*);
 void parse_request(char*, char*, char*);
-int handle_get(SOCKET, char*);
+int handle_get(SOCKET, char*, float, float, struct sockaddr*, int);
 int handle_post(SOCKET,char*, int);
-int handle_request(char*, SOCKET, int);
+int handle_request(char*, SOCKET, int, float, float, struct sockaddr*, int);
 
 
-void connection(void* args)
+void connection(SOCKET s, float plp, float pep)
 {
-    ConnectionArgs* c_args = (ConnectionArgs*)args;
-    c_args->last_request = clock();
-    printf("Connection thread created\n");
     char recv_buf[BUFFER_LENGTH];
 
     //Waiting for a request from the client
-    while(!c_args->closed)
+    struct sockaddr client;
+    int client_len;
+    memset(recv_buf, 0, sizeof(recv_buf));
+    int received = rdt_recv(s, recv_buf, BUFFER_LENGTH, plp, pep, &client, &client_len);
+    if (received > 0)
     {
-        memset(recv_buf, 0, sizeof(recv_buf));
-        int received = recv(c_args->socket, recv_buf, BUFFER_LENGTH, 0);
-        if (received > 0)
+        printf("Bytes received: %d\n", received);
+        printf("Received: %s\n", recv_buf);
+        
+        int sendRes = handle_request(recv_buf, s, received, plp, pep, &client, client_len);
+        if (sendRes == SOCKET_ERROR)
         {
-            c_args->last_request = clock();
-            printf("Bytes received: %d\n", received);
-            printf("Received: %s\n", recv_buf);
-            
-            int sendRes = handle_request(recv_buf,c_args->socket, received);
-            if (sendRes == SOCKET_ERROR)
-            {
-                printf("response failed with error: %d\n", WSAGetLastError());
-                closesocket(c_args->socket);
-                c_args->closed = 1;
-                return;
-            }
-        }
-        else if (received == 0)
-        {
-            //Means the client closed their socket
-            closesocket(c_args->socket);
-            c_args->closed = 1;
-            printf("Client connection closed\n");
-            return;
-        }
-        else
-        {
-            printf("recv failed with error: %d\n", WSAGetLastError());
-            closesocket(c_args->socket);
-            c_args->closed = 1;
+            printf("response failed with error: %d\n", WSAGetLastError());
+            closesocket(s);
             return;
         }
     }
+    else if (received == 0)
+    {
+        //Means the client closed their socket
+        closesocket(s);
+        printf("Client connection closed\n");
+        return;
+    }
+    else
+    {
+        printf("recv failed with error: %d\n", WSAGetLastError());
+        closesocket(s);
+        return;
+    }
     printf("Closing connection...\n");
-    int res = closesocket(c_args->socket);
+    int res = closesocket(s);
     if (res == SOCKET_ERROR)
     {
         printf("closesocket failed with error: %d\n", WSAGetLastError());
         return;
     }
-    printf("Connection closed.\n");
 }
 
 
@@ -85,7 +77,7 @@ void connection(void* args)
 /*
 Handles request in buffer
 */
-int handle_request(char buffer[], SOCKET socket, int received)
+int handle_request(char buffer[], SOCKET socket, int received, float plp, float pep, struct sockaddr* client, int client_len)
 {
     char method[10];
     char path[100];
@@ -95,7 +87,7 @@ int handle_request(char buffer[], SOCKET socket, int received)
         
         printf("GET\n");
         printf("%s\n",path);
-        return handle_get(socket,path);
+        return handle_get(socket, path, plp, pep, client, client_len);
     }
     if(strcmp(method,(char*)"POST")==0){
         // post_request();
@@ -104,7 +96,7 @@ int handle_request(char buffer[], SOCKET socket, int received)
     }
 }
 
-int handle_get(SOCKET socket, char* path)
+int handle_get(SOCKET socket, char* path, float plp, float pep, struct sockaddr* client, int client_len)
 {
     printf("Opening %s...\n", path);
     FILE *file = fopen(path, "rb");
@@ -115,7 +107,7 @@ int handle_get(SOCKET socket, char* path)
         strcat(response, NOT_FOUND);
         strcat(response, BLANK_LINE);
         printf("%s",response);
-        return send(socket, response, 100, 0);
+        return rdt_send(socket, response, 100, plp, pep, client, client_len);
     }
     else //File found
     {
@@ -142,7 +134,7 @@ int handle_get(SOCKET socket, char* path)
             printf("bytesRead = %d\n", bytesRead);
             printf("%s", response);
 
-            result = send(socket, response, bytesRead+19 , 0);
+            result = rdt_send(socket, response, bytesRead+19 , plp, pep, client, client_len);
             if(result == SOCKET_ERROR){
                 printf("error while sending\n");
                 break;
