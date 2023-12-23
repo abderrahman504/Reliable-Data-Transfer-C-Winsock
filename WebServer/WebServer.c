@@ -121,10 +121,13 @@ ServerConfig readServerConfig(const char* filePath) {
         printf("Failed to open file\n");
         exit(1);
     }
-
-    fscanf(file, "Seed: %d", &config.seed);
-    fscanf(file, "Loss Probability: %lf", &config.lossProbability);
-    fscanf(file, "Error Probability: %lf", &config.errorProbability);
+    char line[50];
+    fgets(line, 50, file);
+    sscanf(line, "Seed: %d", &config.seed);
+    fgets(line, 50, file);
+    sscanf(line, "Loss Probability: %lf", &config.lossProbability);
+    fgets(line, 50, file);
+    sscanf(line, "Error Probability: %lf", &config.errorProbability);
 
     fclose(file);
 
