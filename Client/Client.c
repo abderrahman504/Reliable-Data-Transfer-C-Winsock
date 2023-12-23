@@ -2,23 +2,18 @@
 #include <string.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include "../RDTP/rdt.c"
 #include "../Network.h"
 
 #define DEFAULT_COMMANDS "commands.txt"
 #define BUFFER 10000
 
-void start(FILE*, SOCKET);
-int run_command(char*, char*, SOCKET);
-int connect_to_server(char*, char*, SOCKET*);
+void start(FILE*, SOCKET, struct sockaddr*, int);
+int run_command(char*, char*, SOCKET, struct sockaddr*, int);
+int connect_to_server(char*, char*, SOCKET*, struct sockaddr*, int*);
 // int handle_get(SOCKET, char*, char*, char*);
 // int handle_post(SOCKET, char*, char*, char*);
 
-
-/*
-This function runs the commands in file one by one.
-It creates a socket with the specified server name and port and sends the specified request.
-After processing the response it shuts the socket down and repeats until end of file.
-*/
 
 typedef struct {
     char ipAddress[16];
@@ -43,40 +38,38 @@ clientRead clientReadInfo(const char* filePath) {
     return info;
 }
 
-void start(FILE* file, SOCKET conn)
+void start(FILE* file, SOCKET conn, struct sockaddr* dest, int dest_len)
 {
 
-    clientRead info = clientReadInfo("info.txt");
-    printf("IP Address: %s\n", info.ipAddress);
-    printf("Port: %d\n", info.port);
-    printf("Filename: %s\n", info.filename);
+    // clientRead info = clientReadInfo("info.txt");
+    // printf("IP Address: %s\n", info.ipAddress);
+    // printf("Port: %d\n", info.port);
+    // printf("Filename: %s\n", info.filename);
     // char recv_buf[BUFFER];
-    // char line[100];
+    char line[100];
     // // char DEFAULT_PORT[] = "80";
-    // int error_count = 0;
-    // printf("Reading from commands file...\n");
-    // char* check = fgets(line, 100, file);
-    // while (check != NULL) //While more commands exist.
-    // {
-    //     printf("Next command...\n");
-    //     //Parsing line from commands file
-    //     char* token = strtok(line, " ");
-    //     char method[5];
-    //     if (strcmp(token, "client_get") == 0) strcpy(method, "GET");
-    //     else strcpy(method, "POST");
-    //     char *file_path = strtok(NULL, " ");
+    int error_count = 0;
+    printf("Reading from commands file...\n");
+    char* check = fgets(line, 100, file);
+    while (check != NULL) //While more commands exist.
+    {
+        printf("Next command...\n");
+        //Parsing line from commands file
+        char* token = strtok(line, " ");
+        char method[5];
+        if (strcmp(token, "client_get") == 0) strcpy(method, "GET");
+        else strcpy(method, "POST");
+        char *file_path = strtok(NULL, " ");
     //     char *servername = strtok(NULL, " ");
     //     char *port = strtok(NULL, "\n");
     //     // if (port == NULL) port = DEFAULT_PORT;
        
-    //     //Performing command
-    //     error_count += run_command(method, file_path, conn);
-    //     //Fetch next command
-    //     check = fgets(line, 100, file);
-    // }
-    // printf("Command file finished with %d errors.\n", error_count);
-    // shutdown(conn, SD_SEND);
-    // closesocket(conn);
+        //Performing command
+        error_count += run_command(method, file_path, conn, dest, dest_len);
+        //Fetch next command
+        check = fgets(line, 100, file);
+    }
+    printf("Command file finished with %d errors.\n", error_count);
 }
 
 
@@ -85,11 +78,11 @@ Runs the given command.
 Creates a socket to the specified server and sends the request.
 Returns 1 if there was an error with doing the command, and 0 otherwise.
 */
-int run_command(char* method, char* file_path, SOCKET conn)
+int run_command(char* method, char* file_path, SOCKET conn, struct sockaddr* dest, int dest_len)
 {
     if (strcmp(method, "GET") == 0) //GET request
     {
-        handle_get(conn, file_path);
+        handle_get(conn, file_path, dest, dest_len);
     }
     else //POST request
     {
@@ -99,7 +92,7 @@ int run_command(char* method, char* file_path, SOCKET conn)
 }
 
 
-int handle_get(SOCKET conn, char* path)
+int handle_get(SOCKET conn, char* path, struct sockaddr* dest, int dest_len)
 {
     //Construct request
     char request[128] = "";
@@ -109,7 +102,7 @@ int handle_get(SOCKET conn, char* path)
     strcat(request, " HTTP/1.1\r\n\r\n");
     //Send request
     printf("Sending GET to server...\n");
-    int res = send(conn, request, 128, 0);
+    int res = rdt_send(conn, request, 128, 0, 0, dest, dest_len);
     if (res == SOCKET_ERROR){
         printf("send failed with error: %d\n", WSAGetLastError());
         // closesocket(conn);
@@ -132,7 +125,7 @@ int handle_get(SOCKET conn, char* path)
     // printf("%d\n",bytesReceived);
 
     do {
-        bytesReceived = recv(conn, response, BUFFER, 0);
+        bytesReceived = rdt_recv(conn, response, BUFFER, 0, 0, dest, &dest_len);
         printf("--------------------------------------------------------------%d\n",bytesReceived);
 
         if (bytesReceived < 0) {
@@ -284,15 +277,15 @@ Creates and connects a socket to the specified server and port.
 conn is an output pointer that contains the created socket.
 Returns 0 if connected succesfully, and 1 otherwise.
 */
-int connect_to_server(char* servername, char* port, SOCKET* conn_ptr)
+int connect_to_server(char* servername, char* port, SOCKET* conn_ptr, struct sockaddr* dest, int* dest_len)
 {
     int iResult;
     //Prep socket creation
     struct addrinfo *result = NULL, hints;
     ZeroMemory( &hints, sizeof(hints) );
     hints.ai_family   = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_protocol = IPPROTO_TCP;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_protocol = IPPROTO_UDP;
 
     iResult = getaddrinfo(servername, port, &hints, &result);
     if (iResult != 0) {
@@ -309,16 +302,16 @@ int connect_to_server(char* servername, char* port, SOCKET* conn_ptr)
     }
 
     //Connecting to server
-    iResult = connect(*conn_ptr, result->ai_addr, (int)result->ai_addrlen);
-    freeaddrinfo(result);
-    if (iResult == SOCKET_ERROR){
-        // closesocket(*conn_ptr);
-        *conn_ptr = INVALID_SOCKET;
-    }
-    if (*conn_ptr == INVALID_SOCKET) {
-        printf("Unable to connect to server!\n");
-        return 1;
-    }
+    // iResult = connect(*conn_ptr, result->ai_addr, (int)result->ai_addrlen);
+    // freeaddrinfo(result);
+    // if (iResult == SOCKET_ERROR){
+    //     // closesocket(*conn_ptr);
+    //     *conn_ptr = INVALID_SOCKET;
+    // }
+    // if (*conn_ptr == INVALID_SOCKET) {
+    //     printf("Unable to connect to server!\n");
+    //     return 1;
+    // }
     return 0;
 }
 
@@ -331,29 +324,10 @@ Running from command line:
 int main(int argc, char *argv[])
 {
     char server_name[16], server_port[8], command_file[32];
-    //Checking arguments for server name, port, commands file.
-    if (argc == 1){
-        printf("Client running with no arguments. Using localhost, 80 and commands.txt...\n");
-        strcpy(server_name, SERVER_NAME);
-        strcpy(server_port, SERVER_PORT);
-        strcpy(command_file, DEFAULT_COMMANDS);
-    }
-    else if (argc == 3){
-        printf("Client running with 2 arguments-server name and port-with commands.txt as default commands file...\n");
-        strcpy(server_name, argv[1]);
-        strcpy(server_port, argv[2]);
-        strcpy(command_file, DEFAULT_COMMANDS);
-    }
-    else if (argc == 4){
-        printf("Client running with 3 arguments-server name, port, and commands file...\n");
-        strcpy(server_name, argv[1]);
-        strcpy(server_port, argv[2]);
-        strcpy(command_file, argv[3]);
-    }
-    else{
-        printf("Invalid number of arguments (%d). Shutting client down\n", argc);
-        return 1;
-    }
+    strcpy(server_name, SERVER_NAME);
+    strcpy(server_port, SERVER_PORT);
+    strcpy(command_file, DEFAULT_COMMANDS);
+    
     //Trying to open commands file
     FILE* file = fopen(command_file, "r");
     if (file == NULL){
@@ -368,9 +342,11 @@ int main(int argc, char *argv[])
         return 1;
     }
     SOCKET conn = INVALID_SOCKET;
-    if (connect_to_server(server_name, server_port, &conn) == 0){
+    struct sockaddr dest;
+    int dest_len;
+    if (connect_to_server(server_name, server_port, &conn, &dest, &dest_len) == 0){
         printf("Client connected to server\n");
-        start(file, conn);
+        start(file, conn, &dest, dest_len);
     }
     WSACleanup();
     printf("Client shutting down.\n");

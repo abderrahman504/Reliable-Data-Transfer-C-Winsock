@@ -1,6 +1,1 @@
-client_post post.html localhost 80
-client_post post.jpeg localhost 80
-client_get get.html localhost 80
-client_get get.txt localhost 80
-client_get get.png localhost 80
-client_get x.html localhost 80
+client_get get.jpg
