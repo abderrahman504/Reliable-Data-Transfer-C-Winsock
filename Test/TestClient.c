@@ -49,7 +49,7 @@ int main() {
     //Receive data from server
     char buffer[1024];
     printf("Receiving data...\n");
-    int bytesRead = rdt_recv(udp_socket, buffer, sizeof(buffer), 0, 0, NULL, NULL);
+    int bytesRead = rdt_recv(udp_socket, buffer, sizeof(buffer), 0, 0, (struct sockaddr_in*)server->ai_addr, &(server->ai_addrlen));
     if (bytesRead == SOCKET_ERROR) {
         printf("Failed to receive data.\n");
         closesocket(udp_socket);
