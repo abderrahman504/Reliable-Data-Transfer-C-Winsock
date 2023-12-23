@@ -34,7 +34,7 @@ void connection(SOCKET s, float plp, float pep)
 
     //Waiting for a request from the client
     struct sockaddr client;
-    int client_len;
+    int client_len = sizeof(client);
     memset(recv_buf, 0, sizeof(recv_buf));
     int received = rdt_recv(s, recv_buf, BUFFER_LENGTH, plp, pep, (struct sockaddr_in*)&client, &client_len);
     if (received > 0)

@@ -145,51 +145,44 @@ int main(char args[])
 
     // Initialize Winsock
     WSADATA wsaData;
-    int iResult = WSAStartup(MAKEWORD(2,2), &wsaData);
-    if (iResult != 0) {
-    printf("WSAStartup failed: %d\n", iResult);
-    return 1;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        printf("Failed to initialize Winsock.\n");
+        return 1;
     }
 
-    //Preparing to create a socket
-    struct addrinfo *result = NULL, hints;
+    struct addrinfo *server = NULL, hints;
     ZeroMemory(&hints, sizeof(hints));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
     hints.ai_protocol = IPPROTO_UDP;
     hints.ai_flags = AI_PASSIVE;
 
-    iResult = getaddrinfo(NULL, SERVER_PORT, &hints, &result);
+    int iResult = getaddrinfo(NULL, SERVER_PORT, &hints, &server);
     if (iResult != 0) {
         printf("getaddrinfo failed: %d\n", iResult);
         WSACleanup();
         return 1;
     }
-
-    //Creating a listening socket
-    SOCKET udp_socket = INVALID_SOCKET;
-    udp_socket = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
+    // Create a UDP socket
+    SOCKET udp_socket = socket(server->ai_family, SOCK_DGRAM, IPPROTO_UDP);
     if (udp_socket == INVALID_SOCKET) {
-        printf("Error at socket(): %ld\n", WSAGetLastError());
-        freeaddrinfo(result);
+        printf("Failed to create recv socket.\n");
         WSACleanup();
         return 1;
     }
 
-    //Binding the socket
-    iResult = bind(udp_socket, result->ai_addr, (int)result->ai_addrlen);
-    if (iResult == SOCKET_ERROR) {
-        printf("bind failed with error: %d\n", WSAGetLastError());
-        freeaddrinfo(result);
+    //bind UDP socket
+    if (bind(udp_socket, server->ai_addr, server->ai_addrlen) == SOCKET_ERROR) {
+        printf("Failed to bind recv socket.\n");
         closesocket(udp_socket);
         WSACleanup();
         return 1;
     }
-    freeaddrinfo(result);
+    // freeaddrinfo(result);
 
     printf("Server started\n");
     // listening(udp_socket);
-    srand(config.seed);
+    // srand(config.seed);
     connection(udp_socket, config.lossProbability, config.errorProbability);
     printf("Server closing\n");
     return 0;
