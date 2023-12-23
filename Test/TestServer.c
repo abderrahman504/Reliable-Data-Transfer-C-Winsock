@@ -44,11 +44,40 @@ int main() {
     }
 
     // Receive data from the client
-    char buffer[1024];
+    // char request[100];
+    // struct sockaddr_in client_addr;
+    // int client_addr_len = sizeof(client_addr);
+    // printf("Receiving data...\n");
+    // int bytesRead = rdt_recv(udp_socket, request, sizeof(request), 0, 0, &client_addr, &client_addr_len);
+    // if (bytesRead == SOCKET_ERROR) {
+    //     printf("Failed to receive data.\n");
+    //     closesocket(udp_socket);
+    //     WSACleanup();
+    //     return 1;
+    // }
+
+    // // Process the received data
+    // printf("Received data from client: %s\n", buffer);
+
+    
+    // // Send data to the client
+    // char message[] = "Hello, client! I'm so happy for you. Thank cuthulu this works now.";
+    // int messageLength = strlen(message);
+    // if (rdt_send(udp_socket, message, messageLength, 0, 0, (struct sockaddr*)&client_addr, client_addr_len) == SOCKET_ERROR) {
+    //     printf("Failed to send data to the server.\n");
+    //     closesocket(udp_socket);
+    //     WSACleanup();
+    //     return 1;
+    // }
+    
+
+
+    // Receive data from the client
+    char request[100];
     struct sockaddr_in client_addr;
     int client_addr_len = sizeof(client_addr);
     printf("Receiving data...\n");
-    int bytesRead = rdt_recv(udp_socket, buffer, sizeof(buffer), 0, 0, &client_addr, &client_addr_len);
+    int bytesRead = rdt_recv(udp_socket, request, sizeof(request), 0, 0, &client_addr, &client_addr_len);
     if (bytesRead == SOCKET_ERROR) {
         printf("Failed to receive data.\n");
         closesocket(udp_socket);
@@ -56,20 +85,16 @@ int main() {
         return 1;
     }
 
-    // Process the received data
-    printf("Received data from client: %s\n", buffer);
-
-    
-    // Send data to the client
-    char message[] = "Hello, client! I'm so happy for you. Thank cuthulu this works now.";
-    int messageLength = strlen(message);
-    if (rdt_send(udp_socket, message, messageLength, 0, 0, (struct sockaddr*)&client_addr, client_addr_len) == SOCKET_ERROR) {
+    FILE* f = fopen(request, "rb");
+    char buffer[20000];
+    int f_size = fread(buffer, 1, sizeof(buffer), f);
+    fclose(f);
+    if (rdt_send(udp_socket, buffer, f_size, 0, 0, (struct sockaddr*)&client_addr, client_addr_len) == SOCKET_ERROR) {
         printf("Failed to send data to the server.\n");
         closesocket(udp_socket);
         WSACleanup();
         return 1;
     }
-
     // Cleanup
     closesocket(udp_socket);
     WSACleanup();
