@@ -40,7 +40,7 @@ int rdt_send(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
         segments[buf_head/MSS] = segment;
     }
 
-    // Change socket to non-blocking mode
+    // Change socket to blocking mode
     u_long mode = 0;  // 1 to enable non-blocking mode, 0 to disable
     if (ioctlsocket(socket, FIONBIO, &mode) != NO_ERROR) {
         printf("ioctlsocket failed with error: %u\n", WSAGetLastError());
@@ -118,7 +118,7 @@ int rdt_send(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
     //Congestion control variables
     int cwnd = MSS;
     int ssthresh = 64000;
-    int cur_seg = 0;
+    int send_base = 0;
     int dup_ack_count = 0;
     int state = SLOW_START;
     Marker markers[no_of_segments];
@@ -127,7 +127,7 @@ int rdt_send(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
 
     //Send segments
     printf("Transmitting cwnd...\n");
-    send_res = _transmit_cwnd(cwnd, segments, cur_seg, no_of_segments, markers, plp, pep, socket, dest, dest_len);
+    send_res = _transmit_cwnd(cwnd, segments, send_base, no_of_segments, markers, plp, pep, socket, dest, dest_len);
     if (send_res < 0)
     {
         perror("sending cwnd");
@@ -137,13 +137,13 @@ int rdt_send(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
     {
         printf("Didn't send all of cwnd. No action is taken\n");
     }
-    while(cur_seg < no_of_segments)
+    while(send_base < no_of_segments)
     {
         recv_res = recvfrom(socket, recv_stream, ACK_LEN, 0, dest, &dest_len);
         if (recv_res < 0)
         {
             clock_t now = clock();
-            int time_msec = ((double)now-markers[cur_seg].last_sent) / CLOCKS_PER_SEC * 1000;
+            int time_msec = ((double)now-markers[send_base].last_sent) / CLOCKS_PER_SEC * 1000;
             if (time_msec >= timeout_usec) //timer expired
             {
                 printf("Timeout.\n");
@@ -151,7 +151,7 @@ int rdt_send(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
                 cwnd = MSS;
                 dup_ack_count = 0;
                 time_msec *= 2;
-                _transmit_segment(segments+cur_seg, markers+cur_seg, plp, pep, socket, dest, dest_len);
+                _transmit_segment(segments+send_base, markers+send_base, plp, pep, socket, dest, dest_len);
                 state = SLOW_START;
             }
             continue;
@@ -166,12 +166,9 @@ int rdt_send(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
         else //received something
         {
             ACK_Segment ack_seg = to_ack_segment(recv_stream);
-            int acked_seg_index = 0;
-            while(segments[acked_seg_index].seq+segments[acked_seg_index].len != ack_seg.ack)
-                acked_seg_index++;
             //Check for corruption
             if (is_ack_corrupt(&ack_seg) || recv_res != 9) continue;
-            if(markers[acked_seg_index].state == ACKED) //Duplicate
+            if(ack_seg.ack < segments[send_base].seq+segments[send_base].len) //Duplicate
             {
                 printf("Received duplicate ack %d.\n", ack_seg.ack);
                 if (state == CONGESTION_AVOIDANCE || state == SLOW_START)
@@ -181,49 +178,58 @@ int rdt_send(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
                     {
                         ssthresh = cwnd/2;
                         cwnd = ssthresh + 3*MSS;
-                        _transmit_segment(segments+cur_seg, markers+cur_seg, plp, pep, socket, dest, dest_len);
+                        _transmit_segment(segments+send_base, markers+send_base, plp, pep, socket, dest, dest_len);
                         state = FAST_RECOVERY;
                     }
                 }
                 else //FAST_RECOVERY
                 {
                     cwnd += MSS;
-                    _transmit_cwnd(cwnd, segments, cur_seg, no_of_segments, markers, plp, pep, socket, dest, dest_len);
+                    _transmit_cwnd(cwnd, segments, send_base, no_of_segments, markers, plp, pep, socket, dest, dest_len);
                 }
             }
             else //Not duplicate
             {
+                int cum_ack = send_base;
+                while(segments[cum_ack].seq+segments[cum_ack].len != ack_seg.ack)
+                    cum_ack++;
+                //cum_ack will point to the last segment that was acked
                 printf("Received new ack %d\n", ack_seg.ack);
                 //If it's not a retransmit then use it to update estimatedRTT
-                if(markers[acked_seg_index].state == SENT)
+                if(markers[cum_ack].state == SENT)
                 {
                     clock_t now = clock();
-                    int sampleRTT = ((double)now-markers[acked_seg_index].last_sent) / CLOCKS_PER_SEC * 1000000;
+                    int sampleRTT = ((double)now-markers[cum_ack].last_sent) / CLOCKS_PER_SEC * 1000000;
                     estimatedRTT = 0.875 * estimatedRTT + sampleRTT*0.125;
                     devRTT = devRTT*0.75 + 0.25*(sampleRTT > estimatedRTT ? sampleRTT-estimatedRTT : estimatedRTT-sampleRTT);
                     timeout_usec = estimatedRTT + 4*devRTT;
                 }
 
-                //Update cur_seg to next unacked segment
-                markers[acked_seg_index].state = ACKED;
-                while(cur_seg < no_of_segments && markers[cur_seg].state == ACKED) cur_seg++;
-                printf("cur_seg = %d\n", cur_seg);
-                if (cur_seg == no_of_segments) break;
+                //Update send_base to next unacked segment
+                int ack_count = cum_ack-send_base+1;
+                for(int i=send_base; i<=cum_ack; i++) 
+                    markers[i].state = ACKED;
+                send_base = cum_ack+1;
+                printf("send_base = %d\n", send_base);
+                if (send_base == no_of_segments) break;
                 dup_ack_count = 0;
                 
                 if(state == SLOW_START)
                 {
-                    cwnd += MSS;
-                    _transmit_cwnd(cwnd, segments, cur_seg, no_of_segments, markers, plp, pep, socket, dest, dest_len);
+                    cwnd += MSS*ack_count;
+                    _transmit_cwnd(cwnd, segments, send_base, no_of_segments, markers, plp, pep, socket, dest, dest_len);
                     if(cwnd >= ssthresh) state = CONGESTION_AVOIDANCE;
                 }
                 else if(state == CONGESTION_AVOIDANCE)
                 {
-                    cwnd += MSS*(MSS/cwnd);
-                    _transmit_cwnd(cwnd, segments, cur_seg, no_of_segments, markers, plp, pep, socket, dest, dest_len);
+                    cwnd += MSS*(MSS/cwnd)*ack_count;
+                    _transmit_cwnd(cwnd, segments, send_base, no_of_segments, markers, plp, pep, socket, dest, dest_len);
                 }
                 else
-                    cwnd += MSS;
+                {
+                    cwnd = ssthresh;
+                    state = CONGESTION_AVOIDANCE;
+                }
             }
         }
     }
