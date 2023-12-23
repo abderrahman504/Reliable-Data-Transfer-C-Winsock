@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define MSS 20
+#define MSS 500
 #define SEGMENT_HEADER_LEN 13
 #define ACK_LEN 9
 

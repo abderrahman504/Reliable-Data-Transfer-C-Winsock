@@ -37,7 +37,7 @@ int main() {
 
 
     // Send data to the server
-    char message[] = "Hello, server! I am the client. Thank god this works now";
+    char message[] = "Hello, server! I am the client. Thank god this works now!";
     int messageLength = strlen(message);
     if (rdt_send(udp_socket, message, messageLength, 0, 0, server->ai_addr, server->ai_addrlen) == SOCKET_ERROR) {
         printf("Failed to send data to the server.\n");

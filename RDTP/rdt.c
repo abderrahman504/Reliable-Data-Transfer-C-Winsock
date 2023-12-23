@@ -270,15 +270,6 @@ int rdt_send(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
         {
             printf("Timeout. Resending FIN segment...\n");
             continue;
-            // if(errno == EWOULDBLOCK || errno == EAGAIN)
-            // {
-            //     printf("Timeout. Resending FIN segment...\n");
-            //     continue;
-            // }
-            // else{
-            //     perror("recv FIN ACK");
-            //     return -1;
-            // }
         }
         else 
         {
@@ -438,8 +429,7 @@ int rdt_recv(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
                     {
                         no_of_segments = (int)ceil((double)seg.seq/MSS) + 1;
                         segments = malloc(no_of_segments*sizeof(Segment));
-                        for (int i=0; i<no_of_segments; i++)
-                            segments[i].type = -1;
+                        
                     }
                     syn_received = 1;
                 }
@@ -459,6 +449,10 @@ int rdt_recv(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
     }
 
     // put first data where it belongs in segments array and send ack for awaited segment
+    for (int i=0; i<no_of_segments; i++)
+    {
+        segments[i].type = 255;
+    }
     int index = first_data.seq/MSS;
     segments[index] = first_data;
     int recv_base = index == 0 ? 1 : 0;
@@ -529,13 +523,14 @@ int rdt_recv(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
                     //update recv_base
                     while(recv_base < no_of_segments)
                     {
-                        if (segments[recv_base].type == -1) break;
+                        if (segments[recv_base].type == 255) break;
                         recv_base++;
                     }
                 }
             }
             //Send ACK for first unacked segment
-            printf("Sending ACK no#%d seq#%d...\n", recv_base-1, recv_base==0 ? 0 : segments[recv_base-1].seq+segments[recv_base-1].len);
+            int seq = recv_base==0 ? 0 : segments[recv_base-1].seq+segments[recv_base-1].len;
+            printf("Sending ACK no#%d seq#%d...\n", recv_base-1, seq);
             send_res = _transmit_data_ack(recv_base, segments, plp, pep, socket, (struct sockaddr*)dest_addr, *dest_addr_len);
             if (send_res < 0)
             {
@@ -545,14 +540,6 @@ int rdt_recv(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
             else if (send_res != ACK_LEN)
             {
                 printf("Didn't send all of data ACK. No action is taken\n");
-            }
-            for(recv_base=0; recv_base<no_of_segments; recv_base++)
-            {
-                if (segments[recv_base].type == -1)
-                {
-                    recv_base = recv_base;
-                    break;
-                }
             }
         }
     }
@@ -604,9 +591,10 @@ int rdt_recv(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
     int buffer_head = 0;
     for(int i=0; i<no_of_segments; i++)
     {
+        Segment seg = segments[i];
         for(int j=0; j<segments[i].len; j++)
         {
-            buffer[buffer_head] = segments[i].data[j];
+            buffer[buffer_head] = seg.data[j];
             buffer_head++;
         }
     }
