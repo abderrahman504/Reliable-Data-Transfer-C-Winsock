@@ -36,7 +36,7 @@ void connection(SOCKET s, float plp, float pep)
     struct sockaddr client;
     int client_len;
     memset(recv_buf, 0, sizeof(recv_buf));
-    int received = rdt_recv(s, recv_buf, BUFFER_LENGTH, plp, pep, &client, &client_len);
+    int received = rdt_recv(s, recv_buf, BUFFER_LENGTH, plp, pep, (struct sockaddr_in*)&client, &client_len);
     if (received > 0)
     {
         printf("Bytes received: %d\n", received);
