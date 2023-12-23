@@ -558,7 +558,7 @@ int rdt_recv(SOCKET socket, char* buffer, int len, float plp, float pep, struct 
     }
 
     // Change socket to non-blocking mode
-    u_long mode = 1;  // 1 to enable non-blocking mode, 0 to disable
+    mode = 1;  // 1 to enable non-blocking mode, 0 to disable
     if (ioctlsocket(socket, FIONBIO, &mode) != NO_ERROR) {
         printf("ioctlsocket failed with error: %u\n", WSAGetLastError());
         return -1;
